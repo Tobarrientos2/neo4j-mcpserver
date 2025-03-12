@@ -1,5 +1,6 @@
 import neo4j from 'neo4j-driver';
 import fs from 'fs';
+import { spawn } from 'child_process';
 
 // Leer la configuración del test-tool.json
 const toolConfig = JSON.parse(fs.readFileSync('./test-tool.json', 'utf8'));
@@ -16,6 +17,33 @@ async function testConnection() {
         const serverInfo = await driver.verifyConnectivity();
         console.log('Connection successful!');
         console.log('Server info:', serverInfo);
+
+        // Si la conexión es exitosa y no estamos en modo debug, iniciamos el servidor MCP
+        if (!process.env.DEBUG) {
+            console.log('\nStarting MCP server with test configuration...');
+            
+            // Configurar las variables de entorno para el servidor MCP
+            process.env.NEO4J_URI = connectionConfig.uri;
+            process.env.NEO4J_USER = connectionConfig.user;
+            process.env.NEO4J_PASSWORD = connectionConfig.password;
+
+            // Iniciar el servidor MCP
+            const mcpServer = spawn('node', ['build/index.js'], {
+                stdio: 'inherit',
+                env: process.env
+            });
+
+            mcpServer.on('error', (err) => {
+                console.error('Failed to start MCP server:', err);
+                process.exit(1);
+            });
+
+            // Manejar la señal de interrupción
+            process.on('SIGINT', () => {
+                mcpServer.kill('SIGINT');
+                process.exit();
+            });
+        }
 
         // Probar la herramienta
         const session = driver.session();
@@ -65,10 +93,14 @@ async function testConnection() {
             await session.close();
         }
     } catch (error) {
-        console.error('Error during tool testing:');
+        console.error('Error during connection test:');
         console.error('Error:', error);
+        process.exit(1);
     } finally {
-        await driver.close();
+        if (process.env.DEBUG) {
+            await driver.close();
+            process.exit(0);
+        }
     }
 }
 

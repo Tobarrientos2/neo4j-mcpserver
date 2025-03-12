@@ -204,34 +204,34 @@ class Neo4jClient {
                 switch (request.params.name) {
                     case "create-pulse": {
                         if (!this.validateCreatePulseArgs(args)) {
-                            throw new McpError(ErrorCode.InvalidRequest, "Invalid arguments for create-pulse");
+                            throw new McpError(ErrorCode.InvalidRequest, "Invalid arguments for create-pulse: Missing required fields or invalid data types");
                         }
                         response = await this.createPulse(args);
                         break;
                     }
                     case "get-pulse": {
                         if (!this.validateGetPulseArgs(args)) {
-                            throw new McpError(ErrorCode.InvalidRequest, "Invalid arguments for get-pulse");
+                            throw new McpError(ErrorCode.InvalidRequest, "Invalid arguments for get-pulse: Missing pulseName or invalid type");
                         }
                         response = await this.getPulse(args.pulseName, args);
                         break;
                     }
                     case "analyze-app-structure": {
                         if (!this.validateAnalyzeAppStructureArgs(args)) {
-                            throw new McpError(ErrorCode.InvalidRequest, "Invalid arguments for analyze-app-structure");
+                            throw new McpError(ErrorCode.InvalidRequest, "Invalid arguments for analyze-app-structure: Missing mainFile or invalid type");
                         }
                         response = await this.analyzeAppStructure(args);
                         break;
                     }
                     case "update-pulse": {
                         if (!this.validateUpdatePulseArgs(args)) {
-                            throw new McpError(ErrorCode.InvalidRequest, "Invalid arguments for update-pulse");
+                            throw new McpError(ErrorCode.InvalidRequest, "Invalid arguments for update-pulse: Missing required fields or invalid structure");
                         }
                         response = await this.updatePulse(args.pulseName, args.updates);
                         break;
                     }
                     default:
-                        throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${request.params.name}`);
+                        throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${request.params.name}. Available tools are: create-pulse, get-pulse, analyze-app-structure, update-pulse`);
                 }
                 return {
                     content: [{
@@ -241,11 +241,29 @@ class Neo4jClient {
                 };
             }
             catch (error) {
-                if (error instanceof Error) {
+                if (error instanceof McpError) {
                     return {
                         content: [{
                                 type: "text",
-                                text: `Neo4j error: ${error.message}`
+                                text: `MCP Error: ${error.message} (Code: ${error.code})`
+                            }],
+                        isError: true,
+                    };
+                }
+                else if (error instanceof neo4j.Neo4jError) {
+                    return {
+                        content: [{
+                                type: "text",
+                                text: `Database Error: ${error.message}\nCode: ${error.code}\nStack: ${error.stack}`
+                            }],
+                        isError: true,
+                    };
+                }
+                else if (error instanceof Error) {
+                    return {
+                        content: [{
+                                type: "text",
+                                text: `Unexpected error: ${error.message}\nType: ${error.name}\nStack: ${error.stack}`
                             }],
                         isError: true,
                     };
@@ -353,25 +371,31 @@ class Neo4jClient {
         const query = `
         MATCH (p:Pulse {name: $pulseName})
         
+        WITH p
         OPTIONAL MATCH (p)-[:DEFINED_IN]->(f:File)
+        WITH p, f
         
         OPTIONAL MATCH (p)-[:USES_DATA]->(input:DataStructure)
+        WITH p, f, collect(DISTINCT input) as inputs
+        
         OPTIONAL MATCH (p)-[:PRODUCES_DATA]->(output:DataStructure)
+        WITH p, f, inputs, collect(DISTINCT output) as outputs
         
         OPTIONAL MATCH (p)-[r:TRIGGERS]->(targetP:Pulse)
+        WITH p, f, inputs, outputs, collect(DISTINCT {
+            type: type(r),
+            target: targetP.name
+        }) as relationships
         
         OPTIONAL MATCH (p)-[:OPERATES_ON]->(e:Entity)
         OPTIONAL MATCH (p)-[:PERFORMS]->(a:Action)
         
         RETURN {
-            pulse: p,
-            file: f,
-            inputs: collect(DISTINCT input),
-            outputs: collect(DISTINCT output),
-            relationships: collect(DISTINCT {
-                type: type(r),
-                target: targetP.name
-            }),
+            pulse: properties(p),
+            file: properties(f),
+            inputs: inputs,
+            outputs: outputs,
+            relationships: relationships,
             entity: e.name,
             action: a.name
         } as pulseInfo
@@ -380,30 +404,60 @@ class Neo4jClient {
     }
     async analyzeAppStructure(args) {
         const query = `
-        MATCH (f:File {path: $mainFile})
-        
-        MATCH (mainP:Pulse)-[:DEFINED_IN]->(f)
+        OPTIONAL MATCH (f:File {path: $mainFile})
+        OPTIONAL MATCH (mainP:Pulse)-[:DEFINED_IN]->(f)
         WHERE mainP.isMainPulse = true
         
+        WITH f, mainP
+        CALL {
+            WITH f, mainP
+            WITH f, mainP
+            WHERE f IS NULL
+            RETURN "Main file not found in the database" as error
+            UNION
+            WITH f, mainP
+            WHERE f IS NOT NULL AND mainP IS NULL
+            RETURN "No main pulse defined in the specified file" as error
+        }
+        
+        WITH f, mainP, error
+        WHERE error IS NOT NULL
+        RETURN error
+        
+        UNION
+        
+        WITH f, mainP
+        WHERE f IS NOT NULL AND mainP IS NOT NULL
         OPTIONAL MATCH path = (mainP)-[r*]->(p:Pulse)
+        WITH mainP, p, path
+        OPTIONAL MATCH (p)-[:USES_DATA]->(i:DataStructure)
+        WITH mainP, p, path, collect(i) as inputs
+        OPTIONAL MATCH (p)-[:PRODUCES_DATA]->(o:DataStructure)
+        WITH mainP, p, path, inputs, collect(o) as outputs
+        OPTIONAL MATCH (p)-[:DEFINED_IN]->(f:File)
         
-        WITH mainP, path, p,
-             [(p)-[:USES_DATA]->(i:DataStructure) | i] as inputs,
-              [(p)-[:PRODUCES_DATA]->(o:DataStructure) | o] as outputs,
-              [(p)-[:DEFINED_IN]->(f:File) | f] as files
-        
-        RETURN {
-            mainPulse: mainP,
-            structure: collect(DISTINCT {
+        WITH mainP.name as mainPulseName,
+             collect(DISTINCT {
                 pulse: p,
                 inputs: inputs,
                 outputs: outputs,
-                file: files[0],
+                file: f,
                 path: path
-            })
-        } as appStructure
-        `;
-        return this.executeQuery(query, args);
+             }) as structure
+        
+        RETURN {
+            mainPulse: mainPulseName,
+            structure: structure
+        } as appStructure`;
+        const records = await this.executeQuery(query, args);
+        if (!records || records.length === 0) {
+            throw new McpError(ErrorCode.InvalidRequest, `No results found for file: ${args.mainFile}`);
+        }
+        // Si el primer registro tiene un campo 'error', es un mensaje de error
+        if (records[0].has('error')) {
+            throw new McpError(ErrorCode.InvalidRequest, records[0].get('error'));
+        }
+        return records;
     }
     async updatePulse(pulseName, updates) {
         const query = `
@@ -456,15 +510,21 @@ function formatResults(records) {
     if (!records || records.length === 0) {
         return "No results found.";
     }
-    const output = ["Results:"];
-    records.forEach((record, index) => {
-        output.push(`\nRecord ${index + 1}:`);
-        record.keys.forEach(key => {
-            const value = record.get(key);
-            output.push(`${String(key)}: ${formatValue(value)}`);
-        });
+    // Si solo hay un registro y tiene una propiedad, devolver directamente el valor
+    if (records.length === 1 && records[0].keys.length === 1) {
+        const value = records[0].get(records[0].keys[0]);
+        return JSON.stringify(value, null, 2);
+    }
+    // Para múltiples registros o propiedades
+    const results = records.map(record => {
+        const result = {};
+        for (const key of record.keys) {
+            const keyStr = String(key);
+            result[keyStr] = record.get(keyStr);
+        }
+        return result;
     });
-    return output.join('\n');
+    return JSON.stringify(results, null, 2);
 }
 function formatValue(value) {
     if (value === null || value === undefined) {

@@ -1,6 +1,6 @@
 {
   "name": "neo4j-mcpserver",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "A Neo4j MCP server implementation for managing graph database operations",
   "main": "build/index.js",
   "type": "module",
@@ -11,7 +11,13 @@
     "build": "tsc && node -e \"require('fs').chmodSync('build/index.js', '755')\"",
     "start": "node build/index.js",
     "check-env": "node -e \"['NEO4J_URI', 'NEO4J_USER', 'NEO4J_PASSWORD'].forEach(env => { if (!process.env[env]) throw new Error(`Missing ${env} environment variable`); });\"",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "local": "node test-connection.js",
+    "local:debug": "DEBUG=true node test-connection.js",
+    "package": "npm run build && node test-package.js",
+    "package:debug": "DEBUG=true npm run build && node test-package.js",
+    "test:npx": "npm run build && node test-package.js",
+    "test:npx:debug": "DEBUG=true npm run build && node test-package.js"
   },
   "files": [
     "build",
