@@ -79,22 +79,119 @@ class Neo4jClient {
         this.server.setRequestHandler(ListToolsRequestSchema, async () => {
             const tools = [
                 {
-                    name: "neo4j-query",
-                    description: "Execute a Cypher query against the Neo4j database",
+                    name: "create-pulse",
+                    description: "Create a new pulse with its complete structure and file relationships",
                     inputSchema: {
                         type: "object",
                         properties: {
-                            query: {
-                                type: "string",
-                                description: "The Cypher query to execute"
-                            },
-                            parameters: {
+                            pulse: {
                                 type: "object",
-                                description: "Query parameters (optional)",
-                                additionalProperties: true
+                                properties: {
+                                    name: { type: "string" },
+                                    version: { type: "string" },
+                                    description: { type: "string" },
+                                    isAsync: { type: "boolean" },
+                                    isMainPulse: { type: "boolean" },
+                                    fileLocation: { type: "string" }
+                                },
+                                required: ["name", "fileLocation"]
+                            },
+                            entity: { type: "string" },
+                            action: { type: "string" },
+                            dataStructures: {
+                                type: "object",
+                                properties: {
+                                    inputs: {
+                                        type: "array",
+                                        items: {
+                                            type: "object",
+                                            properties: {
+                                                name: { type: "string" },
+                                                structure: { type: "string" },
+                                                source: { type: "string" }
+                                            }
+                                        }
+                                    },
+                                    outputs: {
+                                        type: "array",
+                                        items: {
+                                            type: "object",
+                                            properties: {
+                                                name: { type: "string" },
+                                                structure: { type: "string" },
+                                                target: { type: "string" }
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                            relationships: {
+                                type: "array",
+                                items: {
+                                    type: "object",
+                                    properties: {
+                                        type: { type: "string" },
+                                        targetPulse: { type: "string" }
+                                    }
+                                }
                             }
                         },
-                        required: ["query"]
+                        required: ["pulse", "entity", "action"]
+                    }
+                },
+                {
+                    name: "get-pulse",
+                    description: "Get complete information about a pulse including its context",
+                    inputSchema: {
+                        type: "object",
+                        properties: {
+                            pulseName: { type: "string" },
+                            includeDataFlow: { type: "boolean", default: true },
+                            includeRelatedFiles: { type: "boolean", default: true }
+                        },
+                        required: ["pulseName"]
+                    }
+                },
+                {
+                    name: "analyze-app-structure",
+                    description: "Analyze complete application structure with data flow",
+                    inputSchema: {
+                        type: "object",
+                        properties: {
+                            mainFile: { type: "string" },
+                            includeDataFlow: { type: "boolean", default: true },
+                            depth: {
+                                type: "string",
+                                enum: ["shallow", "deep"],
+                                default: "deep"
+                            }
+                        },
+                        required: ["mainFile"]
+                    }
+                },
+                {
+                    name: "update-pulse",
+                    description: "Update pulse structure and relationships",
+                    inputSchema: {
+                        type: "object",
+                        properties: {
+                            pulseName: { type: "string" },
+                            updates: {
+                                type: "object",
+                                properties: {
+                                    pulseProperties: { type: "object" },
+                                    dataFlow: {
+                                        type: "object",
+                                        properties: {
+                                            inputs: { type: "array" },
+                                            outputs: { type: "array" }
+                                        }
+                                    },
+                                    relationships: { type: "array" }
+                                }
+                            }
+                        },
+                        required: ["pulseName", "updates"]
                     }
                 }
             ];
@@ -105,9 +202,34 @@ class Neo4jClient {
                 let response;
                 const args = request.params.arguments ?? {};
                 switch (request.params.name) {
-                    case "neo4j-query":
-                        response = await this.executeQuery(args.query, args.parameters);
+                    case "create-pulse": {
+                        if (!this.validateCreatePulseArgs(args)) {
+                            throw new McpError(ErrorCode.InvalidRequest, "Invalid arguments for create-pulse");
+                        }
+                        response = await this.createPulse(args);
                         break;
+                    }
+                    case "get-pulse": {
+                        if (!this.validateGetPulseArgs(args)) {
+                            throw new McpError(ErrorCode.InvalidRequest, "Invalid arguments for get-pulse");
+                        }
+                        response = await this.getPulse(args.pulseName, args);
+                        break;
+                    }
+                    case "analyze-app-structure": {
+                        if (!this.validateAnalyzeAppStructureArgs(args)) {
+                            throw new McpError(ErrorCode.InvalidRequest, "Invalid arguments for analyze-app-structure");
+                        }
+                        response = await this.analyzeAppStructure(args);
+                        break;
+                    }
+                    case "update-pulse": {
+                        if (!this.validateUpdatePulseArgs(args)) {
+                            throw new McpError(ErrorCode.InvalidRequest, "Invalid arguments for update-pulse");
+                        }
+                        response = await this.updatePulse(args.pulseName, args.updates);
+                        break;
+                    }
                     default:
                         throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${request.params.name}`);
                 }
@@ -132,6 +254,51 @@ class Neo4jClient {
             }
         });
     }
+    validateCreatePulseArgs(args) {
+        if (!args || typeof args !== 'object')
+            return false;
+        const obj = args;
+        return ('pulse' in obj &&
+            typeof obj.pulse === 'object' &&
+            obj.pulse !== null &&
+            'name' in obj.pulse &&
+            typeof obj.pulse.name === 'string' &&
+            'fileLocation' in obj.pulse &&
+            typeof obj.pulse.fileLocation === 'string' &&
+            'entity' in obj &&
+            typeof obj.entity === 'string' &&
+            'action' in obj &&
+            typeof obj.action === 'string' &&
+            'dataStructures' in obj &&
+            typeof obj.dataStructures === 'object' &&
+            obj.dataStructures !== null &&
+            'relationships' in obj &&
+            Array.isArray(obj.relationships));
+    }
+    validateGetPulseArgs(args) {
+        if (!args || typeof args !== 'object')
+            return false;
+        const obj = args;
+        return ('pulseName' in obj &&
+            typeof obj.pulseName === 'string');
+    }
+    validateAnalyzeAppStructureArgs(args) {
+        if (!args || typeof args !== 'object')
+            return false;
+        const obj = args;
+        return ('mainFile' in obj &&
+            typeof obj.mainFile === 'string');
+    }
+    validateUpdatePulseArgs(args) {
+        if (!args || typeof args !== 'object')
+            return false;
+        const obj = args;
+        return ('pulseName' in obj &&
+            typeof obj.pulseName === 'string' &&
+            'updates' in obj &&
+            typeof obj.updates === 'object' &&
+            obj.updates !== null);
+    }
     async executeQuery(query, parameters = {}) {
         const session = this.driver.session();
         try {
@@ -141,6 +308,143 @@ class Neo4jClient {
         finally {
             await session.close();
         }
+    }
+    async createPulse(args) {
+        const query = `
+        MERGE (p:Pulse {name: $pulse.name})
+        SET p += $pulse
+        
+        MERGE (f:File {path: $pulse.fileLocation})
+        MERGE (p)-[:DEFINED_IN]->(f)
+        
+        MERGE (e:Entity {name: $entity})
+        MERGE (a:Action {name: $action})
+        MERGE (p)-[:OPERATES_ON]->(e)
+        MERGE (p)-[:PERFORMS]->(a)
+        
+        WITH p
+        UNWIND $dataStructures.inputs AS input
+        MERGE (ds:DataStructure {
+            name: input.name,
+            structure: input.structure,
+            type: 'input'
+        })
+        MERGE (p)-[:USES_DATA]->(ds)
+        
+        WITH p
+        UNWIND $dataStructures.outputs AS output
+        MERGE (ds:DataStructure {
+            name: output.name,
+            structure: output.structure,
+            type: 'output'
+        })
+        MERGE (p)-[:PRODUCES_DATA]->(ds)
+        
+        WITH p
+        UNWIND $relationships AS rel
+        MATCH (targetP:Pulse {name: rel.targetPulse})
+        MERGE (p)-[r:TRIGGERS]->(targetP)
+        
+        RETURN p
+        `;
+        return this.executeQuery(query, args);
+    }
+    async getPulse(pulseName, options = {}) {
+        const query = `
+        MATCH (p:Pulse {name: $pulseName})
+        
+        OPTIONAL MATCH (p)-[:DEFINED_IN]->(f:File)
+        
+        OPTIONAL MATCH (p)-[:USES_DATA]->(input:DataStructure)
+        OPTIONAL MATCH (p)-[:PRODUCES_DATA]->(output:DataStructure)
+        
+        OPTIONAL MATCH (p)-[r:TRIGGERS]->(targetP:Pulse)
+        
+        OPTIONAL MATCH (p)-[:OPERATES_ON]->(e:Entity)
+        OPTIONAL MATCH (p)-[:PERFORMS]->(a:Action)
+        
+        RETURN {
+            pulse: p,
+            file: f,
+            inputs: collect(DISTINCT input),
+            outputs: collect(DISTINCT output),
+            relationships: collect(DISTINCT {
+                type: type(r),
+                target: targetP.name
+            }),
+            entity: e.name,
+            action: a.name
+        } as pulseInfo
+        `;
+        return this.executeQuery(query, { pulseName, ...options });
+    }
+    async analyzeAppStructure(args) {
+        const query = `
+        MATCH (f:File {path: $mainFile})
+        
+        MATCH (mainP:Pulse)-[:DEFINED_IN]->(f)
+        WHERE mainP.isMainPulse = true
+        
+        OPTIONAL MATCH path = (mainP)-[r*]->(p:Pulse)
+        
+        WITH mainP, path, p,
+             [(p)-[:USES_DATA]->(i:DataStructure) | i] as inputs,
+              [(p)-[:PRODUCES_DATA]->(o:DataStructure) | o] as outputs,
+              [(p)-[:DEFINED_IN]->(f:File) | f] as files
+        
+        RETURN {
+            mainPulse: mainP,
+            structure: collect(DISTINCT {
+                pulse: p,
+                inputs: inputs,
+                outputs: outputs,
+                file: files[0],
+                path: path
+            })
+        } as appStructure
+        `;
+        return this.executeQuery(query, args);
+    }
+    async updatePulse(pulseName, updates) {
+        const query = `
+        MATCH (p:Pulse {name: $pulseName})
+        
+        SET p += $updates.pulseProperties
+        
+        WITH p
+        OPTIONAL MATCH (p)-[oldData:USES_DATA|PRODUCES_DATA]->(:DataStructure)
+        DELETE oldData
+        
+        WITH p
+        UNWIND $updates.dataFlow.inputs AS input
+        MERGE (ds:DataStructure {
+            name: input.name,
+            structure: input.structure,
+            type: 'input'
+        })
+        MERGE (p)-[:USES_DATA]->(ds)
+        
+        WITH p
+        UNWIND $updates.dataFlow.outputs AS output
+        MERGE (ds:DataStructure {
+            name: output.name,
+            structure: output.structure,
+            type: 'output'
+        })
+        MERGE (p)-[:PRODUCES_DATA]->(ds)
+        
+        WITH p
+        OPTIONAL MATCH (p)-[oldRel:TRIGGERS]->(:Pulse)
+        DELETE oldRel
+        
+        WITH p
+        UNWIND $updates.relationships AS rel
+        MATCH (targetP:Pulse {name: rel.targetPulse})
+        MERGE (p)-[:TRIGGERS]->(targetP)
+        
+        RETURN p
+        `;
+        return this.executeQuery(query, { pulseName, updates });
     }
     async run() {
         const transport = new StdioServerTransport();
