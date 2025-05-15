@@ -1,4 +1,5 @@
 # Neo4j MCP Server
+[![smithery badge](https://smithery.ai/badge/@Tobarrientos2/neo4j-mcpserver)](https://smithery.ai/server/@Tobarrientos2/neo4j-mcpserver)
 
 A Neo4j MCP server implementation for managing graph database operations through the Model Context Protocol.
 
@@ -17,6 +18,14 @@ NEO4J_URI=neo4j+s://your-instance.databases.neo4j.io NEO4J_USER=neo4j NEO4J_PASS
 ```
 
 ## Installation
+
+### Installing via Smithery
+
+To install Neo4j Graph Database Server for Claude Desktop automatically via [Smithery](https://smithery.ai/server/@Tobarrientos2/neo4j-mcpserver):
+
+```bash
+npx -y @smithery/cli install @Tobarrientos2/neo4j-mcpserver --client claude
+```
 
 If you prefer to install the package globally:
 
