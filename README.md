@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/tobarrientos2-neo4j-mcpserver-badge.png)](https://mseep.ai/app/tobarrientos2-neo4j-mcpserver)
+
 # Neo4j MCP Server
 
 A Neo4j MCP server implementation for managing graph database operations through the Model Context Protocol.
