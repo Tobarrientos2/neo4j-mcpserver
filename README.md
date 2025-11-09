@@ -4,6 +4,10 @@ A Neo4j MCP server implementation for managing graph database operations through
 
 🔌 Compatible with both Cursor and Claude Desktop!
 
+<a href="https://glama.ai/mcp/servers/@Tobarrientos2/neo4j-mcpserver">
+  <img width="380" height="200" src="https://glama.ai/mcp/servers/@Tobarrientos2/neo4j-mcpserver/badge" alt="Neo4j Server MCP server" />
+</a>
+
 ## Quick Start
 
 You can run the server directly using npx:
